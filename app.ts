@@ -3,8 +3,6 @@ import cors from "cors";
 import xssClean from "xss-clean";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import companyRouter from "./routers/companyRoutes.js";
-import roleRouter from "./routers/roleRoutes.js";
 import userRouter from "./routers/userRoutes.js";
 import { ApiError } from "./utils/ApiError.js";
 
