@@ -4,6 +4,7 @@ import xssClean from "xss-clean";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import userRouter from "./routers/userRoutes.js";
+import departmentRouter from "./routers/departmentRoutes.js"
 import { ApiError } from "./utils/ApiError.js";
 
 const app = express();
@@ -22,6 +23,9 @@ app.use(xssClean());
 
 // Routes 
 app.use("/api/v1/user", userRouter);
+
+app.use("/api/v1/department",departmentRouter)
+
 
 // Global error handler middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
