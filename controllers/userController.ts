@@ -233,15 +233,29 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
   request.input("offset", sql.Int, offset);
   request.input("limit", sql.Int, limit);
 
+  // Create separate request and conditionally add parameters
+  const countRequest = pool.request();
+
+  // Add parameters only if they exist (same conditions as above)
+  if (authUser.role !== "super-admin") {
+    countRequest.input("auth_department_id", sql.VarChar(20), authUser.department_id);
+  }
+
+  if (search && search.trim()) {
+    countRequest.input("search", sql.NVarChar, `%${search.trim()}%`);
+  }
+
+  if (role) {
+    countRequest.input("role", sql.VarChar(20), role);
+  }
+
+  if (department_id) {
+    countRequest.input("department_id", sql.VarChar(20), department_id);
+  }
+
   const [dataResult, countResult] = await Promise.all([
     request.query(dataQuery),
-    pool.request()
-      .input("auth_department_id", authUser.role !== "super-admin" ? sql.VarChar(20) : null, 
-             authUser.role !== "super-admin" ? authUser.department_id : null)
-      .input("search", search ? sql.NVarChar : null, search ? `%${search.trim()}%` : null)
-      .input("role", role ? sql.VarChar(20) : null, role || null)
-      .input("department_id", department_id ? sql.VarChar(20) : null, department_id || null)
-      .query(countQuery),
+    countRequest.query(countQuery),
   ]);
 
   const users = dataResult.recordset || [];
@@ -261,7 +275,12 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
           hasNextPage: page < totalPages,
           hasPreviousPage: page > 1,
         },
-        filters: { search: search || null, role: role || null, department_id: department_id || null, includeInactive },
+        filters: { 
+          search: search || null, 
+          role: role || null, 
+          department_id: department_id || null, 
+          includeInactive 
+        },
       },
       users.length > 0 ? "Users fetched successfully" : "No users found"
     )
