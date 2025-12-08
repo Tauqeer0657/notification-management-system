@@ -2,18 +2,19 @@ import { NextFunction, Request, RequestHandler, Response } from "express";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { ApiResponse } from "../utils/ApiResponse.js";
 
-// Match your JWT payload structure EXACTLY
+// JWT Payload structure for Notification System
 export interface AuthPayload extends JwtPayload {
   user_id: string;
-  full_name: string;
+  first_name: string;
+  last_name: string;
   email: string;
-  role_id: string;
-  role: string;
-  company_id: string;
-  company_name: string;
+  role: "super-admin" | "admin" | "user";
+  department_id: string;
+  sub_department_id?: string;
+  is_active: boolean;
 }
 
-// ✅ Middleware to verify JWT token from cookies
+// Middleware to verify JWT token from cookies
 const verifyToken: RequestHandler = (
   req: Request,
   res: Response,
@@ -33,7 +34,19 @@ const verifyToken: RequestHandler = (
       token,
       process.env.SECRET_KEY as string
     ) as AuthPayload;
-    req.user = decoded;
+
+    // Set req.user with decoded payload
+    req.user = {
+      user_id: decoded.user_id,
+      first_name: decoded.first_name,
+      last_name: decoded.last_name,
+      email: decoded.email,
+      role: decoded.role,
+      department_id: decoded.department_id,
+      sub_department_id: decoded.sub_department_id,
+      is_active: decoded.is_active,
+    };
+
     next();
   } catch (error) {
     res
@@ -42,7 +55,7 @@ const verifyToken: RequestHandler = (
   }
 };
 
-// ✅ Middleware for role-based authorization
+// Middleware for role-based authorization
 const authorize = (...allowedRoles: string[]): RequestHandler => {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
@@ -50,10 +63,10 @@ const authorize = (...allowedRoles: string[]): RequestHandler => {
       return;
     }
 
-    const { role_id, role } = req.user;
+    const { role } = req.user;
 
-    // Check both role_id and role string
-    if (!allowedRoles.includes(role_id) && !allowedRoles.includes(role)) {
+    // Check if user's role is in allowed roles
+    if (!allowedRoles.includes(role)) {
       res
         .status(403)
         .json(
@@ -67,4 +80,3 @@ const authorize = (...allowedRoles: string[]): RequestHandler => {
 };
 
 export { authorize, verifyToken };
-

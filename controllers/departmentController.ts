@@ -478,14 +478,19 @@ export const getDepartments = asyncHandler(
     request.input("offset", sql.Int, offset);
     request.input("limit", sql.Int, limit);
 
+    const subRequest = pool.request();
+    const countRequest = pool.request();
+
+    // Add search parameter only if it exists
+    if (search && search.trim()) {
+      subRequest.input("search", sql.NVarChar, `%${search.trim()}%`);
+      countRequest.input("search", sql.NVarChar, `%${search.trim()}%`);
+    }
+
     const [dataResult, subResult, countResult] = await Promise.all([
       request.query(dataQuery),
-      pool.request()
-        .input("search", search ? sql.NVarChar : null, search ? `%${search.trim()}%` : null)
-        .query(subQuery),
-      pool.request()
-        .input("search", search ? sql.NVarChar : null, search ? `%${search.trim()}%` : null)
-        .query(countQuery),
+      subRequest.query(subQuery),
+      countRequest.query(countQuery),
     ]);
 
     const departments = dataResult.recordset || [];
