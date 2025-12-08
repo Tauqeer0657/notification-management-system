@@ -3,6 +3,7 @@ import cors from "cors";
 import xssClean from "xss-clean";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import setupRouter from "./routers/setupRoutes.js";
 import userRouter from "./routers/userRoutes.js";
 import departmentRouter from "./routers/departmentRoutes.js"
 import { ApiError } from "./utils/ApiError.js";
@@ -22,8 +23,8 @@ app.use(helmet());
 app.use(xssClean());
 
 // Routes 
+app.use("/api/v1/setup", setupRouter);
 app.use("/api/v1/user", userRouter);
-
 app.use("/api/v1/department",departmentRouter)
 
 

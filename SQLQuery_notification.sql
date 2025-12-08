@@ -1,6 +1,5 @@
 -- =============================================
 -- INTERNAL NOTIFICATION SYSTEM - SQL SERVER
--- Updated Database Design with Industry Best Practices
 -- =============================================
 
 
@@ -8,14 +7,13 @@
 -- 1. DEPARTMENTS TABLE
 -- =============================================
 CREATE TABLE notif_departments (
-    department_id INT IDENTITY(1,1) PRIMARY KEY,
-    department_code VARCHAR(20) NOT NULL UNIQUE,
+    department_id VARCHAR(20) PRIMARY KEY,
     department_name NVARCHAR(100) NOT NULL UNIQUE,
     description NVARCHAR(500) NULL,
     is_active BIT DEFAULT 1,
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE(),
-    created_by INT NULL
+    created_by VARCHAR(20) NULL
 );
 
 
@@ -23,14 +21,14 @@ CREATE TABLE notif_departments (
 -- 2. SUB-DEPARTMENTS TABLE
 -- =============================================
 CREATE TABLE notif_sub_departments (
-    sub_department_id INT IDENTITY(1,1) PRIMARY KEY,
-    department_id INT NOT NULL,
+    sub_department_id VARCHAR(20) PRIMARY KEY,
+    department_id VARCHAR(20) NOT NULL,
     sub_department_name NVARCHAR(100) NOT NULL,
     description NVARCHAR(500) NULL,
     is_active BIT DEFAULT 1,
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE(),
-    created_by INT NULL,
+    created_by VARCHAR(20) NULL,
     
     CONSTRAINT FK_notif_sub_departments_department 
         FOREIGN KEY (department_id) 
@@ -46,13 +44,13 @@ CREATE TABLE notif_sub_departments (
 -- 3. USERS TABLE
 -- =============================================
 CREATE TABLE notif_users (
-    user_id INT IDENTITY(1,1) PRIMARY KEY,
+    user_id VARCHAR(20) PRIMARY KEY,
     first_name NVARCHAR(50) NOT NULL,
     last_name NVARCHAR(50) NOT NULL,
     email NVARCHAR(255) NOT NULL UNIQUE,
     password_hash NVARCHAR(255) NOT NULL,
-    department_id INT NOT NULL,
-    sub_department_id INT NULL,
+    department_id VARCHAR(20) NOT NULL,
+    sub_department_id VARCHAR(20) NULL,
     role VARCHAR(20) NOT NULL CHECK (role IN ('super-admin', 'admin', 'user')),
     phone_number VARCHAR(20) NULL,
     is_active BIT DEFAULT 1,
@@ -71,7 +69,7 @@ CREATE TABLE notif_users (
 
 
 -- =============================================
--- 4. NOTIFICATION CHANNELS TABLE (NEW)
+-- 4. NOTIFICATION CHANNELS TABLE
 -- =============================================
 CREATE TABLE notif_notification_channels (
     channel_id INT IDENTITY(1,1) PRIMARY KEY,
@@ -80,22 +78,18 @@ CREATE TABLE notif_notification_channels (
     created_at DATETIME2 DEFAULT GETDATE()
 );
 
--- Insert default channels (FIXED TABLE NAME)
-INSERT INTO notif_notification_channels (channel_name) VALUES ('email'), ('in_app'), ('sms');
-
-
 -- =============================================
 -- 5. NOTIFICATION TEMPLATES TABLE
 -- =============================================
 CREATE TABLE notif_notification_templates (
-    template_id INT IDENTITY(1,1) PRIMARY KEY,
+    template_id VARCHAR(20) PRIMARY KEY,
     template_name NVARCHAR(100) NOT NULL,
-    department_id INT NOT NULL,
+    department_id VARCHAR(20) NOT NULL,
     subject NVARCHAR(200) NOT NULL,
     body NVARCHAR(MAX) NOT NULL,
     template_variables NVARCHAR(1000) NULL,
     is_active BIT DEFAULT 1,
-    created_by INT NOT NULL,
+    created_by VARCHAR(20) NOT NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE(),
     
@@ -110,10 +104,10 @@ CREATE TABLE notif_notification_templates (
 
 
 -- =============================================
--- 6. TEMPLATE CHANNELS TABLE (NEW - Junction Table)
+-- 6. TEMPLATE CHANNELS TABLE (Junction Table)
 -- =============================================
 CREATE TABLE notif_template_channels (
-    template_id INT NOT NULL,
+    template_id VARCHAR(20) NOT NULL,
     channel_id INT NOT NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
     
@@ -131,13 +125,13 @@ CREATE TABLE notif_template_channels (
 
 
 -- =============================================
--- 7. NOTIFICATION SCHEDULES TABLE (UPDATED)
+-- 7. NOTIFICATION SCHEDULES TABLE
 -- =============================================
 CREATE TABLE notif_notification_schedules (
-    schedule_id INT IDENTITY(1,1) PRIMARY KEY,
-    template_id INT NOT NULL,
-    department_id INT NOT NULL,
-    sub_department_id INT NULL,
+    schedule_id VARCHAR(20) PRIMARY KEY,
+    template_id VARCHAR(20) NOT NULL,
+    department_id VARCHAR(20) NOT NULL,
+    sub_department_id VARCHAR(20) NULL,
     schedule_type VARCHAR(20) NOT NULL CHECK (
         schedule_type IN ('once', 'daily', 'weekly', 'monthly')
     ),
@@ -148,7 +142,7 @@ CREATE TABLE notif_notification_schedules (
     is_active BIT DEFAULT 1,
     last_executed DATETIME2 NULL,
     next_execution DATETIME2 NULL,
-    created_by INT NOT NULL,
+    created_by VARCHAR(20) NOT NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE(),
     
@@ -171,12 +165,12 @@ CREATE TABLE notif_notification_schedules (
 
 
 -- =============================================
--- 8. SCHEDULE RECIPIENTS TABLE (NEW - Junction Table)
+-- 8. SCHEDULE RECIPIENTS TABLE (Junction Table)
 -- =============================================
 CREATE TABLE notif_schedule_recipients (
     id INT IDENTITY(1,1) PRIMARY KEY,
-    schedule_id INT NOT NULL,
-    user_id INT NOT NULL,
+    schedule_id VARCHAR(20) NOT NULL,
+    user_id VARCHAR(20) NOT NULL,
     created_at DATETIME2 DEFAULT GETDATE(),
     
     CONSTRAINT FK_notif_schedule_recipients_schedule 
@@ -198,11 +192,11 @@ CREATE TABLE notif_schedule_recipients (
 -- =============================================
 CREATE TABLE notif_notifications (
     notification_id BIGINT IDENTITY(1,1) PRIMARY KEY,
-    template_id INT NULL,
-    schedule_id INT NULL,
-    user_id INT NOT NULL,
-    department_id INT NOT NULL,
-    sub_department_id INT NULL,
+    template_id VARCHAR(20) NULL,
+    schedule_id VARCHAR(20) NULL,
+    user_id VARCHAR(20) NOT NULL,
+    department_id VARCHAR(20) NOT NULL,
+    sub_department_id VARCHAR(20) NULL,
     subject NVARCHAR(200) NOT NULL,
     body NVARCHAR(MAX) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (
@@ -262,7 +256,7 @@ CREATE TABLE notif_notification_delivery_log (
 -- =============================================
 CREATE TABLE notif_user_notification_preferences (
     preference_id INT IDENTITY(1,1) PRIMARY KEY,
-    user_id INT NOT NULL,
+    user_id VARCHAR(20) NOT NULL,
     channel_id INT NOT NULL,
     is_enabled BIT DEFAULT 1,
     quiet_hours_start TIME NULL,
@@ -291,15 +285,14 @@ CREATE TABLE notif_user_notification_preferences (
 CREATE TABLE notif_audit_logs (
     log_id BIGINT IDENTITY(1,1) PRIMARY KEY,
     table_name VARCHAR(100) NOT NULL,
-    record_id INT NOT NULL,
+    record_id VARCHAR(20) NOT NULL,
     action VARCHAR(10) NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
     old_values NVARCHAR(MAX) NULL,
     new_values NVARCHAR(MAX) NULL,
-    performed_by INT NULL,
+    performed_by VARCHAR(20) NULL,
     performed_at DATETIME2 DEFAULT GETDATE(),
     
     CONSTRAINT FK_notif_audit_user 
         FOREIGN KEY (performed_by) 
         REFERENCES notif_users(user_id)
 );
-
