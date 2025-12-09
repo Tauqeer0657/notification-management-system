@@ -437,7 +437,7 @@ export const getDepartments = asyncHandler(
       ? `WHERE ${whereConditions.join(" AND ")}` 
       : "";
 
-    // Get departments with pagination
+    // Get departments with pagination and user count
     const dataQuery = `
       SELECT 
         d.department_id,
@@ -445,15 +445,18 @@ export const getDepartments = asyncHandler(
         d.description,
         d.is_active,
         d.created_at,
-        d.updated_at
+        d.updated_at,
+        COUNT(DISTINCT u.user_id) AS user_count
       FROM notif_departments d
+      LEFT JOIN notif_users u ON d.department_id = u.department_id AND u.is_active = 1
       ${whereClause}
+      GROUP BY d.department_id, d.department_name, d.description, d.is_active, d.created_at, d.updated_at
       ORDER BY d.created_at DESC
       OFFSET @offset ROWS
       FETCH NEXT @limit ROWS ONLY;
     `;
 
-    // Get sub-departments for these departments
+    // Get sub-departments for these departments with user count
     const subQuery = `
       SELECT 
         sd.sub_department_id,
@@ -461,10 +464,13 @@ export const getDepartments = asyncHandler(
         sd.sub_department_name,
         sd.description,
         sd.is_active,
-        sd.created_at
+        sd.created_at,
+        COUNT(DISTINCT u.user_id) AS user_count
       FROM notif_sub_departments sd
       INNER JOIN notif_departments d ON sd.department_id = d.department_id
+      LEFT JOIN notif_users u ON sd.sub_department_id = u.sub_department_id AND u.is_active = 1
       ${whereClause}
+      GROUP BY sd.sub_department_id, sd.department_id, sd.sub_department_name, sd.description, sd.is_active, sd.created_at
       ORDER BY sd.created_at;
     `;
 
