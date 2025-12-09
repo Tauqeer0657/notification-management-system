@@ -805,3 +805,304 @@ export const getDepartmentsStats = asyncHandler(
     );
   }
 );
+
+// ADD SUB-DEPARTMENT TO EXISTING DEPARTMENT
+
+export const addSubDepartment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const authUser = req.user;
+    if (!authUser) throw new ApiError(401, "Unauthorized");
+
+    // Only admin/super-admin can create sub-departments
+    if (authUser.role !== "admin" && authUser.role !== "super-admin") {
+      throw new ApiError(403, "Only admins can create sub-departments");
+    }
+
+    const { department_id } = req.params;
+    const { sub_department_name, description } = req.body;
+
+    // Validation
+    if (!department_id) {
+      throw new ApiError(400, "Department ID is required");
+    }
+
+    if (!sub_department_name || !validateDepartmentName(sub_department_name)) {
+      throw new ApiError(400, "Valid sub-department name is required (max 100 chars)");
+    }
+
+    if (description && description.length > 500) {
+      throw new ApiError(400, "Description too long (max 500 chars)");
+    }
+
+    const pool = getPool();
+    const transaction = new sql.Transaction(pool);
+
+    try {
+      await transaction.begin();
+
+      // Check if department exists and is active
+      const deptCheckRequest = new sql.Request(transaction);
+      const deptCheck = await deptCheckRequest
+        .input("dept_id", sql.VarChar(20), department_id)
+        .query(`
+          SELECT department_id, department_name, is_active
+          FROM notif_departments
+          WHERE department_id = @dept_id
+        `);
+
+      if (!deptCheck.recordset || deptCheck.recordset.length === 0) {
+        throw new ApiError(404, "Department not found");
+      }
+
+      if (!deptCheck.recordset[0].is_active) {
+        throw new ApiError(400, "Cannot add sub-department to inactive department");
+      }
+
+      // Check if sub-department name already exists in this department
+      const nameCheckRequest = new sql.Request(transaction);
+      const nameCheck = await nameCheckRequest
+        .input("dept_id_check", sql.VarChar(20), department_id)
+        .input("sub_dept_name", sql.NVarChar(100), sub_department_name.trim())
+        .query(`
+          SELECT sub_department_id
+          FROM notif_sub_departments
+          WHERE department_id = @dept_id_check 
+            AND sub_department_name = @sub_dept_name
+        `);
+
+      if (nameCheck.recordset.length > 0) {
+        throw new ApiError(409, "Sub-department name already exists in this department");
+      }
+
+      // Generate sub-department code
+      const codeRequest = new sql.Request(transaction);
+      const codeResult = await codeRequest.query(`
+        SELECT 'SDEPT' + RIGHT('000' + CAST(
+          ISNULL(MAX(CAST(SUBSTRING(sub_department_id, 6, LEN(sub_department_id)) AS INT)), 0) + 1
+          AS VARCHAR), 3) AS new_sub_code
+        FROM notif_sub_departments WITH (TABLOCKX, HOLDLOCK);
+      `);
+
+      const subDeptCode = codeResult.recordset[0]?.new_sub_code;
+
+      // Insert sub-department
+      const insertRequest = new sql.Request(transaction);
+      const result = await insertRequest
+        .input("sub_dept_id", sql.VarChar(20), subDeptCode)
+        .input("dept_id", sql.VarChar(20), department_id)
+        .input("sub_dept_name", sql.NVarChar(100), sub_department_name.trim())
+        .input("sub_description", sql.NVarChar(500), description?.trim() || null)
+        .input("created_by", sql.VarChar(20), authUser.user_id)
+        .query(`
+          INSERT INTO notif_sub_departments (
+            sub_department_id, department_id, sub_department_name, 
+            description, is_active, created_at, updated_at, created_by
+          )
+          OUTPUT 
+            INSERTED.sub_department_id,
+            INSERTED.department_id,
+            INSERTED.sub_department_name,
+            INSERTED.description,
+            INSERTED.is_active,
+            INSERTED.created_at,
+            INSERTED.updated_at
+          VALUES (
+            @sub_dept_id, @dept_id, @sub_dept_name, 
+            @sub_description, 1, GETDATE(), GETDATE(), @created_by
+          )
+        `);
+
+      await transaction.commit();
+
+      const insertedSubDept = result.recordset[0];
+
+      res.status(201).json(
+        new ApiResponse(
+          201,
+          {
+            ...insertedSubDept,
+            department_name: deptCheck.recordset[0].department_name,
+          },
+          "Sub-department created successfully"
+        )
+      );
+    } catch (error: any) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+);
+
+// UPDATE SUB-DEPARTMENT
+
+export const updateSubDepartment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const authUser = req.user;
+    if (!authUser) throw new ApiError(401, "Unauthorized");
+
+    // Only admin/super-admin can update sub-departments
+    if (authUser.role !== "admin" && authUser.role !== "super-admin") {
+      throw new ApiError(403, "Only admins can update sub-departments");
+    }
+
+    const { sub_department_id } = req.params;
+    const { sub_department_name, description, is_active } = req.body;
+
+    if (!sub_department_id) {
+      throw new ApiError(400, "Sub-department ID is required");
+    }
+
+    // Validate at least one field to update
+    if (sub_department_name === undefined && description === undefined && is_active === undefined) {
+      throw new ApiError(400, "No fields provided for update");
+    }
+
+    // Validate inputs
+    if (sub_department_name && !validateDepartmentName(sub_department_name)) {
+      throw new ApiError(400, "Invalid sub-department name");
+    }
+
+    if (description && description.length > 500) {
+      throw new ApiError(400, "Description too long (max 500 chars)");
+    }
+
+    const pool = getPool();
+    const request = pool.request();
+    const updates: string[] = [];
+
+    if (sub_department_name !== undefined) {
+      updates.push("sub_department_name = @sub_department_name");
+      request.input("sub_department_name", sql.NVarChar(100), sub_department_name.trim());
+    }
+
+    if (description !== undefined) {
+      updates.push("description = @description");
+      request.input("description", sql.NVarChar(500), description?.trim() || null);
+    }
+
+    if (is_active !== undefined) {
+      updates.push("is_active = @is_active");
+      request.input("is_active", sql.Bit, is_active ? 1 : 0);
+    }
+
+    updates.push("updated_at = GETDATE()");
+
+    const query = `
+      UPDATE notif_sub_departments
+      SET ${updates.join(", ")}
+      WHERE sub_department_id = @sub_department_id;
+
+      SELECT 
+        sd.sub_department_id,
+        sd.department_id,
+        sd.sub_department_name,
+        sd.description,
+        sd.is_active,
+        sd.created_at,
+        sd.updated_at,
+        d.department_name
+      FROM notif_sub_departments sd
+      INNER JOIN notif_departments d ON sd.department_id = d.department_id
+      WHERE sd.sub_department_id = @sub_department_id;
+    `;
+
+    const result = await request
+      .input("sub_department_id", sql.VarChar(20), sub_department_id)
+      .query(query);
+
+    if (!result.recordset || result.recordset.length === 0) {
+      throw new ApiError(404, "Sub-department not found");
+    }
+
+    res.status(200).json(
+      new ApiResponse(200, result.recordset[0], "Sub-department updated successfully")
+    );
+  }
+);
+
+// DELETE SUB-DEPARTMENT (Soft Delete)
+
+export const deleteSubDepartment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const authUser = req.user;
+    if (!authUser) throw new ApiError(401, "Unauthorized");
+
+    // Only super-admin can delete sub-departments
+    if (authUser.role !== "super-admin") {
+      throw new ApiError(403, "Only super-admin can delete sub-departments");
+    }
+
+    const { sub_department_id } = req.params;
+
+    if (!sub_department_id) {
+      throw new ApiError(400, "Sub-department ID is required");
+    }
+
+    const pool = getPool();
+    const request = pool.request();
+
+    // Check if sub-department exists
+    const subDeptCheck = await request
+      .input("sub_dept_id_check", sql.VarChar(20), sub_department_id)
+      .query(`
+        SELECT 
+          sd.sub_department_id,
+          sd.sub_department_name,
+          sd.department_id,
+          d.department_name
+        FROM notif_sub_departments sd
+        INNER JOIN notif_departments d ON sd.department_id = d.department_id
+        WHERE sd.sub_department_id = @sub_dept_id_check
+      `);
+
+    if (!subDeptCheck.recordset || subDeptCheck.recordset.length === 0) {
+      throw new ApiError(404, "Sub-department not found");
+    }
+
+    const subDeptData = subDeptCheck.recordset[0];
+
+    // Check if sub-department has active users
+    const usageCheck = await pool.request()
+      .input("sub_dept_id_usage", sql.VarChar(20), sub_department_id)
+      .query(`
+        SELECT COUNT(*) as user_count 
+        FROM notif_users 
+        WHERE sub_department_id = @sub_dept_id_usage AND is_active = 1
+      `);
+
+    if (usageCheck.recordset[0].user_count > 0) {
+      throw new ApiError(
+        409,
+        `Cannot delete sub-department. It has ${usageCheck.recordset[0].user_count} active user(s)`
+      );
+    }
+
+    // Soft delete
+    const deleteQuery = `
+      UPDATE notif_sub_departments
+      SET is_active = 0, updated_at = GETDATE()
+      WHERE sub_department_id = @sub_department_id;
+    `;
+
+    const result = await pool.request()
+      .input("sub_department_id", sql.VarChar(20), sub_department_id)
+      .query(deleteQuery);
+
+    if (result.rowsAffected[0] === 0) {
+      throw new ApiError(500, "Failed to delete sub-department");
+    }
+
+    res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          sub_department_id: sub_department_id,
+          sub_department_name: subDeptData.sub_department_name,
+          department_id: subDeptData.department_id,
+          department_name: subDeptData.department_name,
+        },
+        "Sub-department deleted successfully"
+      )
+    );
+  }
+);

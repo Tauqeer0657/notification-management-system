@@ -6,6 +6,9 @@ import {
   updateDepartmentName,
   deleteDepartment,
   getDepartmentsStats,
+  addSubDepartment,        
+  updateSubDepartment,     
+  deleteSubDepartment
 } from "../controllers/departmentController.js";
 import { verifyToken, authorize } from "../middleware/authMiddleware.js";
 
@@ -30,5 +33,14 @@ router.patch("/:id", authorize("admin", "super-admin"), updateDepartmentName);
 
 // Delete department (soft delete)
 router.delete("/:id", authorize("admin", "super-admin"), deleteDepartment);
+
+// Add sub-department to existing department
+router.post("/:department_id/sub-departments", authorize("admin", "super-admin"), addSubDepartment);
+
+// Update sub-department
+router.patch("/sub-departments/:sub_department_id", authorize("admin", "super-admin"), updateSubDepartment);
+
+// Delete sub-department
+router.delete("/sub-departments/:sub_department_id", authorize("super-admin"), deleteSubDepartment);
 
 export default router;
