@@ -8,6 +8,7 @@ import userRouter from "./routers/userRoutes.js";
 import departmentRouter from "./routers/departmentRoutes.js";
 import channelRouter from "./routers/channelRoutes.js";
 import templateRouter from "./routers/templateRoutes.js";
+import scheduleRouter from "./routers/scheduleRoutes.js";
 import { ApiError } from "./utils/ApiError.js";
 
 const app = express();
@@ -30,6 +31,7 @@ app.use("/api/v1/user", userRouter);
 app.use("/api/v1/department", departmentRouter);
 app.use("/api/v1/channel", channelRouter);
 app.use("/api/v1/template", templateRouter);
+app.use("/api/v1/schedule", scheduleRouter);
 
 // Global error handler middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
