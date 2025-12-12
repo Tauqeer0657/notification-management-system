@@ -160,6 +160,7 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
   const search = (req.query.search as string) || "";
   const role = req.query.role as string;
   const department_id = req.query.department_id as string;
+  const sub_department_id = req.query.sub_department_id as string; 
   const includeInactive = req.query.includeInactive === "true";
 
   const offset = (page - 1) * limit;
@@ -173,16 +174,19 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
 
   let whereConditions: string[] = [];
 
+  // AUTHORIZATION: Department-based access
   // Only super-admin sees all users; admin/user see only their department
   if (authUser.role !== "super-admin") {
     whereConditions.push("u.department_id = @auth_department_id");
     request.input("auth_department_id", sql.VarChar(20), authUser.department_id);
   }
 
+  // FILTER: Active/Inactive users
   if (!includeInactive) {
     whereConditions.push("u.is_active = 1");
   }
 
+  // FILTER: Search (user_id, name, email, phone)
   if (search && search.trim()) {
     whereConditions.push(`(
       u.user_id LIKE @search OR 
@@ -194,20 +198,29 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
     request.input("search", sql.NVarChar, `%${search.trim()}%`);
   }
 
+  // FILTER: Role (super-admin, admin, user)
   if (role) {
     whereConditions.push("u.role = @role");
     request.input("role", sql.VarChar(20), role);
   }
 
+  // FILTER: Department ID
   if (department_id) {
     whereConditions.push("u.department_id = @department_id");
     request.input("department_id", sql.VarChar(20), department_id);
+  }
+
+  // NEW: FILTER: Sub-Department ID
+  if (sub_department_id) {
+    whereConditions.push("u.sub_department_id = @sub_department_id");
+    request.input("sub_department_id", sql.VarChar(20), sub_department_id);
   }
 
   const whereClause = whereConditions.length > 0 
     ? `WHERE ${whereConditions.join(" AND ")}` 
     : "";
 
+  // QUERY: Get paginated users
   const dataQuery = `
     SELECT 
       u.user_id, u.first_name, u.last_name, u.email, u.phone_number,
@@ -224,6 +237,7 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
     FETCH NEXT @limit ROWS ONLY;
   `;
 
+  // QUERY: Get total count
   const countQuery = `
     SELECT COUNT(*) AS total
     FROM notif_users u
@@ -233,10 +247,10 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
   request.input("offset", sql.Int, offset);
   request.input("limit", sql.Int, limit);
 
-  // Create separate request and conditionally add parameters
+  // Create separate count request with same filters
   const countRequest = pool.request();
 
-  // Add parameters only if they exist (same conditions as above)
+  // Add parameters only if they exist (must match whereConditions)
   if (authUser.role !== "super-admin") {
     countRequest.input("auth_department_id", sql.VarChar(20), authUser.department_id);
   }
@@ -253,6 +267,12 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
     countRequest.input("department_id", sql.VarChar(20), department_id);
   }
 
+  // NEW: Add sub_department_id to count request
+  if (sub_department_id) {
+    countRequest.input("sub_department_id", sql.VarChar(20), sub_department_id);
+  }
+
+  // Execute both queries in parallel
   const [dataResult, countResult] = await Promise.all([
     request.query(dataQuery),
     countRequest.query(countQuery),
@@ -278,7 +298,8 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
         filters: { 
           search: search || null, 
           role: role || null, 
-          department_id: department_id || null, 
+          department_id: department_id || null,
+          sub_department_id: sub_department_id || null, 
           includeInactive 
         },
       },
@@ -346,7 +367,16 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const { user_id } = req.params;
-  const { first_name, last_name, phone_number, role, department_id, sub_department_id, is_active } = req.body;
+  const { 
+    first_name, 
+    last_name, 
+    email,             
+    phone_number, 
+    role, 
+    department_id, 
+    sub_department_id, 
+    is_active 
+  } = req.body;
 
   if (!user_id) {
     throw new ApiError(400, "User ID is required");
@@ -357,7 +387,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
 
   const userCheck = await checkRequest
     .input("user_id", sql.VarChar(20), user_id)
-    .query("SELECT user_id, department_id, role FROM notif_users WHERE user_id = @user_id");
+    .query("SELECT user_id, email, department_id, role FROM notif_users WHERE user_id = @user_id");
 
   if (userCheck.recordset.length === 0) {
     throw new ApiError(404, "User not found");
@@ -379,6 +409,33 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
     throw new ApiError(403, "Only super-admin can update admin users");
   }
 
+  // NEW: EMAIL VALIDATION & UNIQUENESS CHECK
+  if (email !== undefined) {
+    // Validate email format using your existing utility
+    if (!validateEmail(email)) {
+      throw new ApiError(400, "Invalid email format");
+    }
+
+    // Check if email is different from current
+    if (email.toLowerCase() !== targetUser.email.toLowerCase()) {
+      // Check if new email already exists
+      const emailCheckRequest = pool.request();
+      const emailExists = await emailCheckRequest
+        .input("email_check", sql.VarChar(100), email.toLowerCase())
+        .input("user_id_exclude", sql.VarChar(20), user_id)
+        .query(`
+          SELECT user_id 
+          FROM notif_users 
+          WHERE LOWER(email) = @email_check 
+            AND user_id != @user_id_exclude
+        `);
+
+      if (emailExists.recordset.length > 0) {
+        throw new ApiError(409, "Email already exists");
+      }
+    }
+  }
+
   const updateRequest = pool.request();
   const updates: string[] = [];
 
@@ -389,6 +446,10 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   if (last_name !== undefined) {
     updates.push("last_name = @last_name");
     updateRequest.input("last_name", sql.NVarChar(50), last_name);
+  }
+  if (email !== undefined) {
+    updates.push("email = @email");
+    updateRequest.input("email", sql.VarChar(100), email.toLowerCase());
   }
   if (phone_number !== undefined) {
     updates.push("phone_number = @phone_number");

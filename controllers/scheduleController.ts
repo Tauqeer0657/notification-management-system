@@ -741,7 +741,7 @@ export const updateSchedule = asyncHandler(
 
       if (schedule_time !== undefined) {
         updates.push("schedule_time = @schedule_time");
-        request.input("schedule_time", sql.Time, schedule_time + ":00");
+        request.input("schedule_time", sql.VarChar(8), `${schedule_time}:00`)
       }
 
       if (start_date !== undefined) {
