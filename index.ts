@@ -1,7 +1,7 @@
 import { connectToDatabase } from "./db/connection.js";
 import { app } from "./app.js";
 import { startScheduleWorker, stopScheduleWorker } from "./workers/scheduleWorker.js";
-import { initializeEmailService, testEmailConnection } from "./services/emailService.js";
+import { initializeEmailService } from "./services/emailService.js";
 
 /**
  * ========================================
@@ -30,18 +30,6 @@ const startServer = async () => {
     // ========================================
     console.log("📧 [2/4] Initializing email service...");
     initializeEmailService();
-
-    // ========================================
-    // 3. TEST EMAIL CONNECTION (Optional but recommended)
-    // ========================================
-    console.log("🔍 [3/4] Testing SMTP connection...");
-    const emailReady = await testEmailConnection();
-    if (!emailReady) {
-      console.warn("⚠️  Email service not ready, schedules will fail to send emails");
-      console.warn("⚠️  Check your SMTP credentials in .env file\n");
-    } else {
-      console.log("✅ Email service ready\n");
-    }
 
     // ========================================
     // 4. START SCHEDULE WORKER

@@ -21,7 +21,7 @@ import {
  * 3. For each schedule:
  *    - Fetches recipients from notif_schedule_recipients
  *    - Creates notification records (notif_notifications)
- *    - Simulates email sending
+ *    - Sends emails via Nodemailer
  *    - Logs delivery status (notif_notification_delivery_log)
  *    - Updates last_executed and next_execution timestamps
  * 
@@ -97,7 +97,7 @@ async function processSchedules() {
         s.department_id,
         s.sub_department_id,
         s.schedule_type,
-        s.schedule_time,
+        CONVERT(VARCHAR(8), s.schedule_time, 108) AS schedule_time,
         s.start_date,
         s.end_date,
         s.template_variables,
@@ -226,82 +226,98 @@ async function executeSchedule(schedule: any) {
 
     for (const recipient of recipients) {
       try {
-        // Generate notification ID (NOTIF001, NOTIF002...)
-        const notifIdRequest = new sql.Request(transaction);
-        const notifIdResult = await notifIdRequest.query(`
-          SELECT 'NOTIF' + RIGHT('000' + CAST(
-            ISNULL(MAX(CAST(SUBSTRING(notification_id, 6, LEN(notification_id)) AS INT)), 0) + 1
-            AS VARCHAR), 3) AS new_code
-          FROM notif_notifications WITH (TABLOCKX, HOLDLOCK);
-        `);
+        // ========================================
+        // 5. BUILD DYNAMIC VARIABLES FOR ANY TEMPLATE
+        // ========================================
+        // CHANGED: Merged all available variables to support any template dynamically
+        const vars = {
+          // Schedule-level variables from template_variables JSON
+          ...templateVars,
 
-        const newNotificationId = notifIdResult.recordset[0]?.new_code;
+          // User-level dynamic variables (always available)
+          first_name: recipient.first_name,
+          last_name: recipient.last_name,
+          full_name: `${recipient.first_name} ${recipient.last_name}`,
+          email: recipient.email,
+          phone_number: recipient.phone_number || '',
 
-        // Replace placeholders with recipient data
+          // Schedule context (department info, etc.)
+          department_id: schedule.department_id,
+          sub_department_id: schedule.sub_department_id || '',
+          department_name: schedule.department_name || '',
+          sub_department_name: schedule.sub_department_name || '',
+        };
+
         const personalizedSubject = replaceTemplateVariables(
           schedule.subject,
-          {
-            ...templateVars,
-            first_name: recipient.first_name,
-            last_name: recipient.last_name,
-            email: recipient.email,
-          }
+          vars
         );
 
         const personalizedBody = replaceTemplateVariables(
           schedule.body,
-          {
-            ...templateVars,
-            first_name: recipient.first_name,
-            last_name: recipient.last_name,
-            email: recipient.email,
-          }
+          vars
         );
 
         // ========================================
-        // 5. CREATE NOTIFICATION RECORD
+        // 6. CREATE NOTIFICATION RECORD & GET AUTO-GENERATED ID
         // ========================================
         const notifRequest = new sql.Request(transaction);
-        await notifRequest
-          .input("notification_id", sql.VarChar(20), newNotificationId)
+        const notifResult = await notifRequest
           .input("user_id", sql.VarChar(20), recipient.user_id)
           .input("template_id", sql.VarChar(20), schedule.template_id)
           .input("schedule_id", sql.VarChar(20), schedule.schedule_id)
           .input("department_id", sql.VarChar(20), schedule.department_id)
+          .input("sub_department_id", sql.VarChar(20), schedule.sub_department_id || null)
           .input("subject", sql.NVarChar(500), personalizedSubject)
           .input("body", sql.NVarChar(sql.MAX), personalizedBody)
           .query(`
             INSERT INTO notif_notifications (
-              notification_id,
               user_id,
               template_id,
               schedule_id,
               department_id,
+              sub_department_id,
               subject,
               body,
               status,
-              is_read,
               created_at,
               updated_at
             )
             VALUES (
-              @notification_id,
               @user_id,
               @template_id,
               @schedule_id,
               @department_id,
+              @sub_department_id,
               @subject,
               @body,
               'pending',
-              0,
               GETDATE(),
               GETDATE()
-            )
+            );
+            
+            -- Get the auto-generated notification_id
+            SELECT SCOPE_IDENTITY() AS notification_id;
           `);
 
+        const newNotificationId = notifResult.recordset[0]?.notification_id;
+
+        if (!newNotificationId) {
+          console.error(`   ❌ Failed to create notification for ${recipient.email}`);
+          failureCount++;
+          continue;
+        }
+
+        console.log(`   🆔 Generated ID: ${newNotificationId}`);
+
         // ========================================
-        // 6. SIMULATE EMAIL SENDING
+        // 7. SEND EMAIL VIA NODEMAILER
         // ========================================
+        console.log(`\n   📧 [EMAIL] Sending email...`);
+        console.log(`      To: ${recipient.email}`);
+        console.log(`      Name: ${recipient.first_name} ${recipient.last_name}`);
+        console.log(`      Subject: ${personalizedSubject}`);
+
         const emailResult = await sendEmail({
           to: recipient.email,
           subject: personalizedSubject,
@@ -309,43 +325,62 @@ async function executeSchedule(schedule: any) {
           recipientName: `${recipient.first_name} ${recipient.last_name}`,
         });
 
+        if (emailResult.success) {
+          console.log(`   ✅ [EMAIL] Email sent successfully`);
+          if (emailResult.messageId) {
+            console.log(`      Message ID: ${emailResult.messageId}`);
+          }
+        } else {
+          console.log(`   ❌ [EMAIL] Failed to send email: ${emailResult.error}`);
+        }
+
         // ========================================
-        // 7. LOG DELIVERY STATUS
+        // 8. LOG DELIVERY STATUS
         // ========================================
+        // CHANGED: Updated to match actual notif_notification_delivery_log schema
         const logRequest = new sql.Request(transaction);
         await logRequest
-          .input("notification_id", sql.VarChar(20), newNotificationId)
-          .input("channel", sql.VarChar(20), "email")
-          .input("status", sql.VarChar(20), emailResult.success ? "sent" : "failed")
-          .input("delivered_at", sql.DateTime, emailResult.success ? new Date() : null)
+          .input("notification_id", sql.BigInt, newNotificationId)
+          .input("channel_id", sql.Int, 1) // 1 = email (you can define channel IDs as needed)
+          .input("delivery_status", sql.VarChar(20), emailResult.success ? "delivered" : "failed")
           .input("error_message", sql.NVarChar(500), emailResult.error || null)
+          .input("delivery_attempts", sql.Int, 1)
+          .input("delivered_at", sql.DateTime2, emailResult.success ? new Date() : null)
           .query(`
             INSERT INTO notif_notification_delivery_log (
               notification_id,
-              channel,
-              status,
-              delivered_at,
+              channel_id,
+              delivery_status,
               error_message,
+              delivery_attempts,
+              delivered_at,
               created_at
             )
             VALUES (
               @notification_id,
-              @channel,
-              @status,
-              @delivered_at,
+              @channel_id,
+              @delivery_status,
               @error_message,
-              GETDATE()
+              @delivery_attempts,
+              @delivered_at,
+              SYSDATETIME()
             )
           `);
 
-        // Update notification status
+        // ========================================
+        // 9. UPDATE NOTIFICATION STATUS
+        // ========================================
         const statusRequest = new sql.Request(transaction);
         await statusRequest
-          .input("notification_id", sql.VarChar(20), newNotificationId)
+          .input("notification_id", sql.BigInt, newNotificationId)
           .input("status", sql.VarChar(20), emailResult.success ? "sent" : "failed")
+          .input("sent_at", sql.DateTime2, emailResult.success ? new Date() : null)
           .query(`
             UPDATE notif_notifications
-            SET status = @status, updated_at = GETDATE()
+            SET 
+              status = @status,
+              sent_at = @sent_at,
+              updated_at = GETDATE()
             WHERE notification_id = @notification_id
           `);
 
@@ -362,7 +397,7 @@ async function executeSchedule(schedule: any) {
     }
 
     // ========================================
-    // 8. UPDATE SCHEDULE TIMESTAMPS
+    // 10. UPDATE SCHEDULE TIMESTAMPS
     // ========================================
     const nextExecution = calculateNextExecution(
       schedule.schedule_type,
@@ -386,7 +421,7 @@ async function executeSchedule(schedule: any) {
 
     await transaction.commit();
 
-    console.log(`   ✅ Schedule executed successfully`);
+    console.log(`\n   ✅ Schedule executed successfully`);
     console.log(`      Success: ${successCount} | Failed: ${failureCount}`);
     console.log(`      Next execution: ${nextExecution ? nextExecution.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "N/A (one-time schedule)"}`);
 

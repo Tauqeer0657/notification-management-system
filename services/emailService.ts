@@ -98,22 +98,3 @@ export async function sendEmail(data: EmailData): Promise<EmailResult> {
     };
   }
 }
-
-/**
- * Test email service (optional helper)
- */
-export async function testEmailConnection(): Promise<boolean> {
-  if (!transporter) {
-    console.error("❌ [EMAIL] Transporter not initialized");
-    return false;
-  }
-
-  try {
-    await transporter.verify();
-    console.log("✅ [EMAIL SERVICE] SMTP connection verified successfully");
-    return true;
-  } catch (error: any) {
-    console.error("❌ [EMAIL SERVICE] SMTP connection failed:", error.message);
-    return false;
-  }
-}
